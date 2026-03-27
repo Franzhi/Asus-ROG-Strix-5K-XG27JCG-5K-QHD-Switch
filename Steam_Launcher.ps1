@@ -1,6 +1,6 @@
 ﻿# ==============================================================================
-# НАЗВА: Універсальний Steam_Launcher.ps1 (v 3.0 - Perfected UI & Logic)
-# ОПИС: Розумна картотека ігор, автозавершення, вихід в один клік через трей.
+# НАЗВА: Універсальний Steam_Launcher.ps1 (v 3.1 - QHD Scaling Fix)
+# ОПИС: Розумна картотека ігор, автозавершення, ідеальне масштабування QHD/5K.
 # КОДУВАННЯ: Обов'язково зберегти як "UTF-8 with BOM"
 # ==============================================================================
 
@@ -11,7 +11,7 @@ Add-Type -AssemblyName System.Drawing
 # ------------------------------------------------------------------------------
 # БЛОК 1: СУЧАСНІ ЕЛЕМЕНТИ ІНТЕРФЕЙСУ (C# 5.0 Сумісний)
 # ------------------------------------------------------------------------------
-if (-not ([System.Management.Automation.PSTypeName]"SteamUITheme").Type) {
+if (-not ([System.Management.Automation.PSTypeName]"SteamUIThemeV3").Type) {
     Add-Type -TypeDefinition @"
     using System;
     using System.Runtime.InteropServices;
@@ -19,7 +19,11 @@ if (-not ([System.Management.Automation.PSTypeName]"SteamUITheme").Type) {
     using System.Drawing.Drawing2D;
     using System.Windows.Forms;
 
-    public class SteamUITheme {
+    public class SteamUIThemeV3 {
+        // Сучасний API для точного Per-Monitor масштабування
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool SetProcessDpiAwarenessContext(int dpiFlag);
+
         [DllImport("user32.dll")]
         public static extern bool SetProcessDPIAware();
 
@@ -31,6 +35,16 @@ if (-not ([System.Management.Automation.PSTypeName]"SteamUITheme").Type) {
 
         [DllImport("user32.dll")]
         public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        public static void SetDPI() {
+            try {
+                // Спроба увімкнути сучасний Per-Monitor V2 (Windows 10 1607+)
+                SetProcessDpiAwarenessContext(-4);
+            } catch {
+                // Фолбек для старих систем
+                SetProcessDPIAware();
+            }
+        }
 
         public static void StyleTitleBar(IntPtr hwnd, Color bgColor, Color textColor) {
             int trueVal = 1;
@@ -114,7 +128,7 @@ if (-not ([System.Management.Automation.PSTypeName]"SteamUITheme").Type) {
                 _animPos = target;
                 _animTimer.Stop();
             } else {
-                _animPos += (target - _animPos) * 0.3f; // Швидкість анімації
+                _animPos += (target - _animPos) * 0.3f;
             }
             this.Invalidate();
         }
@@ -191,7 +205,8 @@ if (-not ([System.Management.Automation.PSTypeName]"SteamUITheme").Type) {
 "@ -ReferencedAssemblies "System.Windows.Forms", "System.Drawing"
 }
 
-[SteamUITheme]::SetProcessDPIAware() | Out-Null
+# Викликаємо новий метод з підтримкою Per-Monitor V2
+[SteamUIThemeV3]::SetDPI()
 
 # ------------------------------------------------------------------------------
 # БЛОК 2: РОЗУМНА ОБРОБКА АРГУМЕНТІВ ТА ПАРСИНГ НАЗВ
@@ -244,41 +259,54 @@ if (-not $currentConfig.Use2K) { $currentConfig.UseClone = $false }
 if ($currentConfig.UseClone) { $currentConfig.UseHDR = $false; $currentConfig.Use2K = $true }
 
 # ------------------------------------------------------------------------------
-# БЛОК 4: ДАШБОРД НАЛАШТУВАНЬ ЗАПУСКУ
+# БЛОК 4: ДАШБОРД НАЛАШТУВАНЬ ЗАПУСКУ (РЕСПОНСИВНИЙ ДИЗАЙН)
 # ------------------------------------------------------------------------------
+# Визначаємо поточну ширину екрану і вираховуємо коефіцієнт масштабування відносно 5K
+$screenWidth = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width
+$scale = $screenWidth / 5120.0
+if ($scale -lt 0.3) { $scale = 0.3 } # Захист від аномалій
+
+# Функції-помічники для математичного перерахунку пікселів
+function S([int]$val) { return [int][Math]::Round($val * $scale) }
+
 function Show-SettingsDashboard {
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "Параметри запуску $gameDisplayName"
-    $form.Size = New-Object System.Drawing.Size(800, 512)
+    # Перераховуємо розмір вікна
+    $form.Size = New-Object System.Drawing.Size((S 800), (S 512))
     $form.StartPosition = 'CenterScreen'
     $form.FormBorderStyle = 'FixedDialog'
     
     $form.MaximizeBox = $false 
     $form.MinimizeBox = $false
     
-    $form.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Dpi
+    # Жорстко вимикаємо втручання Windows, бо ми рахуємо розміри самі!
+    $form.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None
     
     $themeColor = [System.Drawing.Color]::FromArgb(41, 47, 59)
     $titleTextColor = [System.Drawing.Color]::Gray
     $form.BackColor = $themeColor
     $form.ForeColor = [System.Drawing.Color]::LightGray
+    # Перераховуємо розмір шрифту
     $form.Font = New-Object System.Drawing.Font("Segoe UI", 11)
     $form.TopMost = $true
     $form.ShowIcon = $false
 
-    [SteamUITheme]::StyleTitleBar($form.Handle, $themeColor, $titleTextColor)
+    # Фарбуємо заголовок (працює завдяки SteamUIThemeV2/V3 з Блоку 1)
+    [SteamUIThemeV3]::StyleTitleBar($form.Handle, $themeColor, $titleTextColor)
 
     $contentPanel = New-Object System.Windows.Forms.FlowLayoutPanel
     $contentPanel.Dock = 'Fill'
     $contentPanel.FlowDirection = 'TopDown'
-    $contentPanel.Padding = New-Object System.Windows.Forms.Padding(128, 50, 40, 0)
+    # Перераховуємо відступи
+    $contentPanel.Padding = New-Object System.Windows.Forms.Padding((S 128), (S 50), (S 40), 0)
     $contentPanel.WrapContents = $false
 
     function Add-ToggleRow($labelText, $initialState) {
         $row = New-Object System.Windows.Forms.Panel
-        $row.Width = 680
-        $row.Height = 50 
-        $row.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 24)
+        $row.Width = S 680
+        $row.Height = S 50 
+        $row.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, (S 24))
 
         $lbl = New-Object System.Windows.Forms.Label
         $lbl.Text = $labelText
@@ -286,7 +314,9 @@ function Show-SettingsDashboard {
         $lbl.Location = New-Object System.Drawing.Point(0, 0)
 
         $toggle = New-Object ModernToggle
-        $toggle.Location = New-Object System.Drawing.Point(480, 0)
+        # Динамічно задаємо перерахований розмір для тумблера
+        $toggle.Size = New-Object System.Drawing.Size((S 80), (S 48))
+        $toggle.Location = New-Object System.Drawing.Point((S 480), 0)
         $toggle.Checked = $initialState
 
         $row.Controls.Add($toggle) | Out-Null
@@ -318,13 +348,15 @@ function Show-SettingsDashboard {
 
     $btnPanel = New-Object System.Windows.Forms.Panel
     $btnPanel.Dock = 'Bottom'
-    $btnPanel.Height = 160
+    $btnPanel.Height = S 160
     $btnPanel.BackColor = [System.Drawing.Color]::FromArgb(36, 38, 43)
 
     $btnLaunch = New-Object RoundedButton
     $btnLaunch.Text = "ГРАТИ"
-    $btnLaunch.Size = New-Object System.Drawing.Size(352, 96)
-    $btnLaunch.Location = New-Object System.Drawing.Point(224, 32) 
+    # Перераховуємо всі розміри та координати кнопки
+    $btnLaunch.Size = New-Object System.Drawing.Size((S 352), (S 96))
+    $btnLaunch.CornerRadius = S 8
+    $btnLaunch.Location = New-Object System.Drawing.Point((S 224), (S 32)) 
     $btnLaunch.ForeColor = [System.Drawing.Color]::White
     $btnLaunch.Font = New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)
     $btnLaunch.NormalColor = [System.Drawing.Color]::FromArgb(118, 197, 79) 
@@ -350,8 +382,8 @@ function Show-SettingsDashboard {
 
     $form.Add_Shown({
         $SW_SHOW = 5
-        [SteamUITheme]::ShowWindow($form.Handle, $SW_SHOW) | Out-Null
-        [SteamUITheme]::SetForegroundWindow($form.Handle) | Out-Null
+        [SteamUIThemeV3]::ShowWindow($form.Handle, $SW_SHOW) | Out-Null
+        [SteamUIThemeV3]::SetForegroundWindow($form.Handle) | Out-Null
         $form.Activate()
         $form.BringToFront()
     })
