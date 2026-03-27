@@ -1,0 +1,2 @@
+Game Launch Options on Steam: "C:\Windows\System32\wscript.exe" "C:\Program Files (x86)\Steam\Steam_Launcher.vbs" %command%
+Параметри запуску гри у Steam: "C:\Windows\System32\wscript.exe" "C:\Program Files (x86)\Steam\Steam_Launcher.vbs" %command%
