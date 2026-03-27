@@ -1,5 +1,5 @@
 ﻿# ==============================================================================
-# НАЗВА: Універсальний Steam_Launcher.ps1 (v 2.9 - One-Click Tray Exit)
+# НАЗВА: Універсальний Steam_Launcher.ps1 (v 3.0 - Perfected UI & Logic)
 # ОПИС: Розумна картотека ігор, автозавершення, вихід в один клік через трей.
 # КОДУВАННЯ: Обов'язково зберегти як "UTF-8 with BOM"
 # ==============================================================================
@@ -11,7 +11,7 @@ Add-Type -AssemblyName System.Drawing
 # ------------------------------------------------------------------------------
 # БЛОК 1: СУЧАСНІ ЕЛЕМЕНТИ ІНТЕРФЕЙСУ (C# 5.0 Сумісний)
 # ------------------------------------------------------------------------------
-if (-not ([System.Management.Automation.PSTypeName]"ModernUIHelper").Type) {
+if (-not ([System.Management.Automation.PSTypeName]"SteamUITheme").Type) {
     Add-Type -TypeDefinition @"
     using System;
     using System.Runtime.InteropServices;
@@ -19,7 +19,7 @@ if (-not ([System.Management.Automation.PSTypeName]"ModernUIHelper").Type) {
     using System.Drawing.Drawing2D;
     using System.Windows.Forms;
 
-    public class ModernUIHelper {
+    public class SteamUITheme {
         [DllImport("user32.dll")]
         public static extern bool SetProcessDPIAware();
 
@@ -32,9 +32,16 @@ if (-not ([System.Management.Automation.PSTypeName]"ModernUIHelper").Type) {
         [DllImport("user32.dll")]
         public static extern bool SetForegroundWindow(IntPtr hWnd);
 
-        public static void EnableDarkTitleBar(IntPtr hwnd) {
-            int useImmersiveDarkMode = 1;
-            DwmSetWindowAttribute(hwnd, 20, ref useImmersiveDarkMode, sizeof(int));
+        public static void StyleTitleBar(IntPtr hwnd, Color bgColor, Color textColor) {
+            int trueVal = 1;
+            DwmSetWindowAttribute(hwnd, 19, ref trueVal, sizeof(int));
+            DwmSetWindowAttribute(hwnd, 20, ref trueVal, sizeof(int));
+                
+            int bgRef = bgColor.R | (bgColor.G << 8) | (bgColor.B << 16);
+            DwmSetWindowAttribute(hwnd, 35, ref bgRef, sizeof(int));
+
+            int textRef = textColor.R | (textColor.G << 8) | (textColor.B << 16);
+            DwmSetWindowAttribute(hwnd, 36, ref textRef, sizeof(int));
         }
     }
 
@@ -81,6 +88,10 @@ if (-not ([System.Management.Automation.PSTypeName]"ModernUIHelper").Type) {
         private Color _onColor = Color.FromArgb(0, 120, 212);
         private Color _offColor = Color.FromArgb(70, 70, 70);
         private Color _thumbColor = Color.White;
+        
+        private float _animPos = 0f;
+        private Timer _animTimer;
+        private bool _isHovered = false;
 
         public Color OnColor { get { return _onColor; } set { _onColor = value; Invalidate(); } }
         public Color OffColor { get { return _offColor; } set { _offColor = value; Invalidate(); } }
@@ -89,29 +100,82 @@ if (-not ([System.Management.Automation.PSTypeName]"ModernUIHelper").Type) {
         public ModernToggle() {
             this.SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
             this.AutoSize = false;
-            this.Size = new Size(54, 28);            
+            this.Size = new Size(80, 48); 
+            this.Cursor = Cursors.Default;
+            
+            _animTimer = new Timer();
+            _animTimer.Interval = 15;
+            _animTimer.Tick += new EventHandler(OnAnimTick);
         }
+
+        private void OnAnimTick(object sender, EventArgs e) {
+            float target = this.Checked ? 1.0f : 0.0f;
+            if (Math.Abs(_animPos - target) < 0.02f) {
+                _animPos = target;
+                _animTimer.Stop();
+            } else {
+                _animPos += (target - _animPos) * 0.3f; // Швидкість анімації
+            }
+            this.Invalidate();
+        }
+
+        protected override void OnCheckedChanged(EventArgs e) {
+            base.OnCheckedChanged(e);
+            _animTimer.Start();
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); _isHovered = true; Invalidate(); }
+        protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); _isHovered = false; Invalidate(); }
 
         protected override void OnPaint(PaintEventArgs pevent) {
             pevent.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            pevent.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            
             Color bgColor = this.Parent != null ? this.Parent.BackColor : Color.FromArgb(41, 47, 59);
             pevent.Graphics.Clear(bgColor);
 
-            GraphicsPath path = new GraphicsPath();
-            int d = this.Height - 1;
-            path.AddArc(0, 0, d, d, 90, 180);
-            path.AddArc(this.Width - d - 1, 0, d, d, -90, 180);
-            path.CloseFigure();
+            Rectangle rect = new Rectangle(1, 1, this.Width - 3, this.Height - 3);
+            GraphicsPath path = GetRoundedPath(rect);
 
-            using (SolidBrush brush = new SolidBrush(this.Checked ? OnColor : OffColor)) {
+            using (SolidBrush brush = new SolidBrush(this.Checked ? _onColor : _offColor)) {
                 pevent.Graphics.FillPath(brush, path);
             }
 
-            int thumbSize = this.Height - 5;
-            int thumbX = this.Checked ? this.Width - thumbSize - 3 : 3;
-            using (SolidBrush thumbBrush = new SolidBrush(ThumbColor)) {
-                pevent.Graphics.FillEllipse(thumbBrush, thumbX, 2, thumbSize, thumbSize);
+            if (_isHovered) {
+                using (Pen pen = new Pen(Color.FromArgb(80, 255, 255, 255), 2f)) {
+                    pevent.Graphics.DrawPath(pen, path);
+                }
+            } else {
+                using (Pen pen = new Pen(Color.FromArgb(40, 0, 0, 0), 1f)) {
+                    pevent.Graphics.DrawPath(pen, path);
+                }
             }
+
+            int thumbMargin = 4;
+            int thumbSize = this.Height - (thumbMargin * 2) - 2;
+            int startX = thumbMargin + 1;
+            int endX = this.Width - thumbSize - thumbMargin - 2;
+
+            float currentX = startX + (endX - startX) * _animPos;
+
+            float overshootFactor = 6.0f;
+            if (_animPos > 0.7f && this.Checked) currentX += overshootFactor * (1.0f - _animPos);
+            if (_animPos < 0.3f && !this.Checked) currentX -= overshootFactor * _animPos;
+
+            using (SolidBrush thumbBrush = new SolidBrush(_thumbColor)) {
+                pevent.Graphics.FillEllipse(thumbBrush, currentX, thumbMargin + 1, thumbSize, thumbSize);
+            }
+            
+            path.Dispose();
+        }
+
+        private GraphicsPath GetRoundedPath(Rectangle r) {
+            GraphicsPath gp = new GraphicsPath();
+            int d = r.Height;
+            gp.AddArc(r.X, r.Y, d, d, 90, 180);
+            gp.AddArc(r.Right - d, r.Y, d, d, -90, 180);
+            gp.CloseFigure();
+            return gp;
         }
     }
 
@@ -127,7 +191,7 @@ if (-not ([System.Management.Automation.PSTypeName]"ModernUIHelper").Type) {
 "@ -ReferencedAssemblies "System.Windows.Forms", "System.Drawing"
 }
 
-[ModernUIHelper]::SetProcessDPIAware() | Out-Null
+[SteamUITheme]::SetProcessDPIAware() | Out-Null
 
 # ------------------------------------------------------------------------------
 # БЛОК 2: РОЗУМНА ОБРОБКА АРГУМЕНТІВ ТА ПАРСИНГ НАЗВ
@@ -184,19 +248,25 @@ if ($currentConfig.UseClone) { $currentConfig.UseHDR = $false; $currentConfig.Us
 # ------------------------------------------------------------------------------
 function Show-SettingsDashboard {
     $form = New-Object System.Windows.Forms.Form
-    $form.Text = " "
+    $form.Text = "Параметри запуску $gameDisplayName"
     $form.Size = New-Object System.Drawing.Size(800, 512)
     $form.StartPosition = 'CenterScreen'
     $form.FormBorderStyle = 'FixedDialog'
-    $form.ControlBox = $false
+    
+    $form.MaximizeBox = $false 
+    $form.MinimizeBox = $false
+    
     $form.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Dpi
-    $form.BackColor = [System.Drawing.Color]::FromArgb(41, 47, 59)
+    
+    $themeColor = [System.Drawing.Color]::FromArgb(41, 47, 59)
+    $titleTextColor = [System.Drawing.Color]::Gray
+    $form.BackColor = $themeColor
     $form.ForeColor = [System.Drawing.Color]::LightGray
     $form.Font = New-Object System.Drawing.Font("Segoe UI", 11)
     $form.TopMost = $true
     $form.ShowIcon = $false
 
-    [ModernUIHelper]::EnableDarkTitleBar($form.Handle)
+    [SteamUITheme]::StyleTitleBar($form.Handle, $themeColor, $titleTextColor)
 
     $contentPanel = New-Object System.Windows.Forms.FlowLayoutPanel
     $contentPanel.Dock = 'Fill'
@@ -213,10 +283,10 @@ function Show-SettingsDashboard {
         $lbl = New-Object System.Windows.Forms.Label
         $lbl.Text = $labelText
         $lbl.AutoSize = $true
-        $lbl.Location = New-Object System.Drawing.Point(96, -8)
+        $lbl.Location = New-Object System.Drawing.Point(0, 0)
 
         $toggle = New-Object ModernToggle
-        $toggle.Location = New-Object System.Drawing.Point(0, 0)
+        $toggle.Location = New-Object System.Drawing.Point(480, 0)
         $toggle.Checked = $initialState
 
         $row.Controls.Add($toggle) | Out-Null
@@ -280,8 +350,8 @@ function Show-SettingsDashboard {
 
     $form.Add_Shown({
         $SW_SHOW = 5
-        [ModernUIHelper]::ShowWindow($form.Handle, $SW_SHOW) | Out-Null
-        [ModernUIHelper]::SetForegroundWindow($form.Handle) | Out-Null
+        [SteamUITheme]::ShowWindow($form.Handle, $SW_SHOW) | Out-Null
+        [SteamUITheme]::SetForegroundWindow($form.Handle) | Out-Null
         $form.Activate()
         $form.BringToFront()
     })
@@ -343,15 +413,12 @@ if ($currentConfig.Use2K -or $currentConfig.UseClone -or $currentConfig.UseHDR) 
         $notifyIcon.Icon = [System.Drawing.SystemIcons]::Application
     }
 
-    # Обробник прямого кліку по іконці
     $notifyIcon.Add_MouseUp({
         if ($_.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
             
-            # 1. Ховаємо іконку
             $notifyIcon.Visible = $false
             $notifyIcon.Dispose()
 
-            # 2. Відновлення параметрів системи
             if ($currentConfig.UseClone) {
                 & "C:\Windows\System32\displayswitch.exe" /internal
                 Start-Sleep -Seconds 10 
@@ -365,7 +432,6 @@ if ($currentConfig.Use2K -or $currentConfig.UseClone -or $currentConfig.UseHDR) 
                 Wait-DisplayResolution 5120
             }
             
-            # 3. Вбиваємо процес
             [System.Windows.Forms.Application]::Exit()
         }
     })
@@ -374,8 +440,6 @@ if ($currentConfig.Use2K -or $currentConfig.UseClone -or $currentConfig.UseHDR) 
     [System.Windows.Forms.Application]::Run()
 }
 else {
-    # Скрипт нічого не змінив, гра запущена у нативному стані
-    # Даємо грі 10 секунд на те, щоб створити своє головне вікно і захопити фокус
     Start-Sleep -Seconds 10
     exit
 }
