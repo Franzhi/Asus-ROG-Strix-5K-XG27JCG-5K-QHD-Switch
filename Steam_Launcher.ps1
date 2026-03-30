@@ -59,7 +59,7 @@ if (-not ([System.Management.Automation.PSTypeName]"SteamUIThemeV3").Type) {
         }
     }
 
-    public class RoundedButton : Control {
+    public class RoundedButton : Button {
         private int _cornerRadius = 8;
         private Color _normalColor = Color.Gray;
         private Color _hoverColor = Color.LightGray;
@@ -325,7 +325,7 @@ function Show-SettingsDashboard {
         return $toggle
     }
 
-    $tgl2K = Add-ToggleRow "Перемкнути у QHD" $currentConfig.Use2K
+    $tgl2K = Add-ToggleRow "Перемкнути монітор у QHD" $currentConfig.Use2K
     $tglClone = Add-ToggleRow "Увімкнути дублювання екранів" $currentConfig.UseClone
     $tglHDR = Add-ToggleRow "Увімкнути HDR" $currentConfig.UseHDR
 
